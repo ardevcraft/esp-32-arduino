@@ -1,0 +1,94 @@
+#include <SPI.h>
+#include <MFRC522.h>
+
+constexpr byte SS_PIN = 5;        // RC522 SDA/SS
+constexpr byte RST_PIN = 22;      // RC522 RST
+constexpr byte BUZZER_PIN = 21;   // Buzzer I/O or S
+constexpr byte DATA_BLOCK = 4;    // MIFARE Classic data block
+
+MFRC522 rfid(SS_PIN, RST_PIN);
+MFRC522::MIFARE_Key key;
+
+void beepOnSuccess() {
+  tone(BUZZER_PIN, 2000);
+  delay(800);
+  noTone(BUZZER_PIN);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+
+void finishCard() {
+  rfid.PICC_HaltA();
+  rfid.PCD_StopCrypto1();
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  // SPI.begin(SCK, MISO, MOSI, SS)
+  SPI.begin(18, 19, 23, SS_PIN);
+  rfid.PCD_Init();
+  delay(50);
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  // Default Key A used by many MIFARE Classic cards.
+  for (byte i = 0; i < 6; i++) {
+    key.keyByte[i] = 0xFF;
+  }
+
+  Serial.println("Reader ready. Tap your card.");
+}
+
+void loop() {
+  if (!rfid.PICC_IsNewCardPresent() ||
+      !rfid.PICC_ReadCardSerial()) {
+    delay(50);
+    return;
+  }
+
+  Serial.print("Card UID:");
+  for (byte i = 0; i < rfid.uid.size; i++) {
+    Serial.printf(" %02X", rfid.uid.uidByte[i]);
+  }
+  Serial.println();
+
+  MFRC522::StatusCode status = rfid.PCD_Authenticate(
+      MFRC522::PICC_CMD_MF_AUTH_KEY_A,
+      DATA_BLOCK,
+      &key,
+      &rfid.uid
+  );
+
+  if (status != MFRC522::STATUS_OK) {
+    Serial.print("Authentication failed: ");
+    Serial.println(rfid.GetStatusCodeName(status));
+    finishCard();
+    delay(500);
+    return;
+  }
+
+  byte buffer[18];
+  byte bufferSize = sizeof(buffer);
+
+  status = rfid.MIFARE_Read(DATA_BLOCK, buffer, &bufferSize);
+
+  if (status == MFRC522::STATUS_OK) {
+    Serial.print("Block 4 text: ");
+
+    for (byte i = 0; i < 16; i++) {
+      if (buffer[i] == 0) break;
+      Serial.write(buffer[i]);
+    }
+
+    Serial.println();
+    Serial.println("Read successful — beep!");
+    beepOnSuccess();
+  } else {
+    Serial.print("Read failed: ");
+    Serial.println(rfid.GetStatusCodeName(status));
+  }
+
+  finishCard();
+  delay(500);
+}
